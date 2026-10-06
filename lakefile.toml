@@ -1,0 +1,10 @@
+name = "Congradualate"
+version = "0.1.0"
+defaultTargets = ["congradualate"]
+
+[[lean_lib]]
+name = "Congradualate"
+
+[[lean_exe]]
+name = "congradualate"
+root = "Main"
