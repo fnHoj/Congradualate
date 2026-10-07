@@ -3,84 +3,61 @@ import Congradualate.Gradual
 open Gradual
 
 inductive EvalError where
-  | TypeError | CastError | ConstantError
+  | TypeError | CastError | ConstantError | NotImplemented
+deriving Repr
 
-export EvalError (TypeError CastError)
+export EvalError (TypeError CastError ConstantError NotImplemented)
 
-inductive SimpleValue (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) where
-  | const (c : S.ℂ) (h : S.Δ c = τ)
-  | lambda (x : S.𝕏) (σ : S.𝕋)
+inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) where
+  | const (c : S.ℂ) (h : S.Δ c ~ τ)
+  | lambda (x : S.𝕏) (σ σ' : S.𝕋)
     (e : TypedExpression S (if · = x then some σ else none) σ')
-    (h : σ ⟶ σ' = τ)
-  | location (l : Fin m) (h : ref (C[l]) = τ)
+    (h : σ ⟶ σ' ~ τ)
+  | location (l : Fin m) (h : ref (C[l]) ~ τ)
 
-/-
-inductive SimpleValue (S : TypeSystem) (C : Vector S.𝕋 m) :
-    S.𝕋 → Type where
-  | const (c : S.ℂ) : SimpleValue S C (S.Δ c)
-  | lambda (x : S.𝕏) (σ : S.𝕋) {τ : S.𝕋}
-    (e : TypedExpression S (if · = x then some σ else none) τ) :
-      SimpleValue S C (σ ⟶ τ)
-  | location (l : Fin m) : SimpleValue S C (ref C[l])
-
-def SimpleValue.functionCasesOn {C : Vector S.𝕋 m}
-  {motive : SimpleValue S C (σ ⟶ τ) → Sort u}
-  (const : ∀ (c : S.ℂ) (h : S.Δ c = σ ⟶ τ), motive (h ▸ SimpleValue.const c))
-  («lambda» : ∀ x : S.𝕏,
-    ∀ e : TypedExpression S (if · = x then some σ else none) τ,
-      motive (.lambda x σ e)) :
-    ∀ s : SimpleValue S C (σ ⟶ τ), motive s := rfl |>
-  show ∀ {ν}, ∀ h : ν = σ ⟶ τ, ∀ s : SimpleValue S C ν, motive (h ▸ s) from fun
-  | _, .const c => const c _
-  | _, .location l => nomatch ‹ref C[l] = σ ⟶ τ›
-  | _, .lambda x σ' (τ := τ') e => by
-    injection ‹σ' ⟶ τ' = σ ⟶ τ› with hσ hτ
-    cases hσ
-    cases hτ
-    exact «lambda» x e
--/
-
-inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) :
-    S.𝕋 → Type where
-  | simple : SimpleValue S C τ → Value S C τ
-  | cast τ (ne : σ ≠ τ := by decide) (con : σ ~ τ := by decide) :
-    SimpleValue S C τ → Value S C σ
-
-namespace Value
-
-instance : Coe (SimpleValue S C τ) (Value S C τ) where coe := .simple
-
-protected def castCases {C : Vector S.𝕋 m}
-  {motive : Value S C τ → Sort u}
-  (cast : ∀ σ, (con : τ ~ σ) → ∀ s : SimpleValue S C σ, motive <|
-    if eq : τ = σ then .simple (eq ▸ s) else .cast σ eq con s) :
-      ∀ v, motive v
-  | .simple s => dif_pos (Eq.refl τ) |>.ndrec <| cast τ .rfl s
-  | .cast σ ne con s => dif_neg ne |>.ndrec <| cast σ con s
-
-def unbox : Value S C τ → Σ τ', SimpleValue S C τ'
-  | .simple s => ⟨τ, s⟩
-  | .cast τ _ _ s => ⟨τ, s⟩
-
--- abbrev const (c : S.ℂ) : Value S C (S.Δ c) := .simple (.const c)
--- abbrev «lambda» (x : S.𝕏) (σ : S.𝕋) {τ : S.𝕋}
---   (e : TypedExpression S (if · = x then some σ else none) τ) :
---     Value S C (σ ⟶ τ) := .simple (.lambda x σ e)
--- abbrev location {C : Vector S.𝕋 m} (l : Fin m) :
---   Value S C (ref C[l]) := .simple (.location l)
-
-end Value
+instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Value S C τ) where
+  reprPrec v _ := "(" ++ (match v with
+  | .const c _ => reprPrec c 10
+  | .lambda x σ _ e _ =>
+    "lambda " ++ reprPrec x 10 ++ " : " ++ reprPrec σ 10 ++ " =>" ++
+    .indentD (reprPrec e 10)
+  | .location l _ => s!"*{l}"
+  ) ++ " : " ++ reprPrec τ 10 ++ ")"
 
 def Result (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) :=
   Except EvalError (Value S C τ)
 
+instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Result S C τ) :=
+  inferInstanceAs <| Repr (Except ..)
+
+def Value.cast : Value S C σ → Result S C τ
+  | .const c _ =>
+    if h : S.Δ c ~ τ then .ok (.const c h) else .error CastError
+  | .lambda x σ σ' e _ =>
+    if h : σ ⟶ σ' ~ τ then .ok (.lambda x σ σ' e h) else .error CastError
+  | .location l _ =>
+    if h : ref (C[l]) ~ τ then .ok (.location l h) else .error CastError
+
 def Memory (S : TypeSystem) (C : Vector S.𝕋 m) :=
   ∀ l : Fin m, Value S C C[l]
 
+instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] (C : Vector S.𝕋 m) :
+  Repr (Memory S C) where reprPrec μ _ := "![" ++ run μ 0 ++ "]"
+where run (μ : Memory S C) (i : Nat) : Std.Format :=
+  if h : i < m then
+    toString i ++ ": " ++ reprPrec (μ ⟨i, h⟩) 10 ++ "," ++ .line ++ run μ (i + 1)
+  else .nil
+
+-- def newRef (C : Vector S.𝕋 m) (μ : Memory S C) (v : Value S C τ) :
+--     Σ C : Vector S.𝕋 (m + 1), Memory S C :=
+--   ⟨.mk (C.toList.concat τ).toArray (by simp), fun l ↦
+--     if h : l < m then sorry else by
+--       have : l = ⟨m, m.lt_add_one⟩ := by ext; simp only; omega
+--       simp [this]
+--       sorry⟩
+
 set_option linter.checkUnivs false
 structure ComputationSystem extends TypeSystem where
-  -- δ (c : ℂ) (σ τ : ⦗𝔾⦘) (h : Δ c = σ ⟶ τ) :
-  --   Value toTypeSystem C σ → Value toTypeSystem C τ
   δ : ℂ → ℂ → ℂ
   δ_lawful (f x : ℂ) (σ τ : ⦗𝔾⦘) :
     Δ f = σ ⟶ τ →
@@ -90,20 +67,43 @@ structure ComputationSystem extends TypeSystem where
 instance : Coe ComputationSystem TypeSystem where
   coe := ComputationSystem.toTypeSystem
 
--- def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
---   (μ : Memory S.toTypeSystem C) :
---     {τ : S.𝕋} → TypedExpression S (fun _ ↦ none) τ →
---       Σ m, Σ C : Vector S.𝕋 m, Memory S C × Result S C τ
---   | _, .const c => ⟨m, C, μ, .ok <| .simple <| .const c rfl⟩
---   | τ ⟶ _, .lambda x e => ⟨m, C, μ, .ok <| .simple <| .lambda x τ e rfl⟩
---   | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ e₁ with
---     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
---     | ⟨m, C, μ, .ok v₁⟩ => v₁.castCases (motive := fun _ ↦ _) fun
---       | _, _, .const c rfl => _
---       | _, _, .lambda x σ e rfl => by
---         rename_i σ' h
---         obtain ⟨h, h'⟩ := TypeConsistent.function_iff.mp h
---   | _, .getref _ => _
---   | _, .deref _ => _
---   | _, .assign _ _ => _
---   | _, .cast _ _ _ _ => _
+instance (S : ComputationSystem) (τ : S.𝕋) : Inhabited <|
+    Σ m, Σ C : Vector S.𝕋 m, Memory S.toTypeSystem C ×
+      Result S.toTypeSystem C τ where
+  default := ⟨0, .mk #[] rfl, nofun, .error NotImplemented⟩
+
+set_option linter.unusedVariables false in
+def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
+  (μ : Memory S.toTypeSystem C) :
+    {τ : S.𝕋} → TypedExpression S (fun _ ↦ none) τ →
+      Σ m, Σ C : Vector S.𝕋 m, Memory S C × Result S C τ
+  | _, .const c => ⟨m, C, μ, .ok <| .const c .rfl⟩
+  | τ ⟶ τ', .lambda x e => ⟨m, C, μ, .ok <| .lambda x τ τ' e .rfl⟩
+  | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ e₁ with
+    | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+    | ⟨m, C, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ e₂ with
+      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+      | ⟨m, C, μ, .ok <| .const c₂ _⟩ => ⟨m, C, μ, match h : S.Δ c₁ with
+        | .ground _ | ref _ => nomatch h ▸ h₁
+        | ?? => Value.cast (.const (S.δ c₁ c₂) .con_unknown)
+        | σ ⟶ σ' => if h₂ : S.Δ c₂ ~ σ
+          then Value.cast (.const (S.δ c₁ c₂) <| S.δ_lawful c₁ c₂ σ σ' h h₂)
+          else .error CastError⟩
+      | ⟨m, C, μ, .ok <| _⟩ => ⟨m, C, μ, .error ConstantError⟩
+    | ⟨m, C, μ, .ok <| .lambda x σ σ' e h⟩ => match eval S C μ e₂ with
+      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+      | ⟨m, C, μ, .ok v₂⟩ => panic! "lambda 替换未实现"
+  | _, .getref e => panic! "新地址分配未实现"
+  | τ, .deref e => match eval S C μ e with
+    | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+    | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
+    | ⟨m, C, μ, .ok <| .location l _⟩ => ⟨m, C, μ, (μ l).cast⟩
+  | _, .assign e₁ e₂ => match eval S C μ e₁ with
+    | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+    | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
+    | ⟨m, C, μ, .ok <| .location l h⟩ => match eval S C μ e₂ with
+      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+      | ⟨m, C, μ, .ok v₂⟩ => panic! "储存写入未实现"
+  | _, .cast (σ := σ) τ e _ _ => match eval S C μ e with
+    | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+    | ⟨m, C, μ, .ok v⟩ => ⟨m, C, μ, v.cast⟩
