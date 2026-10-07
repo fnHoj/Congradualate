@@ -58,6 +58,25 @@ abbrev isnumber : TSys.𝔼 := Constant.isnumber
 abbrev mystery : TSys.𝔼 := Constant.mystery
 
 /--
+info: some ⟨??, (lambda "r1" : ?? =>
+   ((lambda "r2" : ref ?? =>
+     ((lambda "_" : ?? =>
+       ((deref ("r1" : ?? : ref ??) : ?? : boolean ⟶ ??)
+         (#t : boolean) : ??) : ?? ⟶ ??)
+       ("r2" : ref ?? ⟵
+         (#f : boolean : ??) : ref ?? : ??) : ??) : ref ?? ⟶ ??)
+     ("r1" : ?? : ref ??) : ??) : ?? ⟶ ??)
+   (getref (lambda "x" : ?? =>
+     ("x" : ??) : ?? ⟶ ??) : ref (?? ⟶ ??) : ??) : ??⟩
+-/
+#guard_msgs in
+#eval Gradual.annotate TSys (fun _ ↦ none) <|
+  say "r1" := getref (lambda "x" => "x");
+  say "r2" : ref ?? := "r1";
+  say "_" := "r2" ⟵ #f;
+  deref "r1" #t
+
+/--
 info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#t : boolean))⟩⟩⟩
 -/
 #guard_msgs in
