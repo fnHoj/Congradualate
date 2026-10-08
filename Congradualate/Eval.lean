@@ -203,7 +203,7 @@ def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.�
   | _, .cast (σ := σ) τ e _ _ => match eval S C μ V e with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok v⟩ => ⟨m, C, μ, v.cast⟩
-termination_by sizeOf e
+termination_by sizeOf e + sizeOf V
 decreasing_by
   all_goals simp_all; try omega
-  sorry
+  all_goals sorry

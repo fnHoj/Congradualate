@@ -9,5 +9,5 @@ def main : IO Unit := do
   IO.println "那么 `isnumber (lambda \"x\" : number => \"x\")` 是一个类型正确的表达式，"
   IO.println "但既没有运算规则能算出它的数值，又没有报错规则认为其错误。"
   IO.println "这理论上能修，但我暂且把所有由这种疏漏造成的运行问题叫 `ConstantError`。"
-  IO.println <| repr <| (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (Γ := fun _ ↦ none) (.mk #[] rfl) nofun ⟨nofun⟩ e) <$> Gradual.annotate TSys (fun _ ↦ none)
+  IO.println <| repr <| (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys #v[] nofun .nil e) <$> Gradual.annotate TSys []
     (isnumber <| lambda "x" : number => "x")
