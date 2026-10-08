@@ -99,3 +99,11 @@ info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Exc
 #eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
   Gradual.annotate TSys (fun _ ↦ none)
     (isnumber <| lambda "x" : number => "x")
+
+/--
+info: some ⟨number, ⟨1, ⟨{ toArray := #[number], size_toArray := _ }, (![0: (2 : number), ], Except.ok (2 : number))⟩⟩⟩
+-/
+#guard_msgs in
+#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
+  Gradual.annotate TSys (fun _ ↦ none)
+    (deref <| getref 0 ⟵ 2)
