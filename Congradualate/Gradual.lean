@@ -44,6 +44,7 @@ instance instDecidableRelTypeConsistent [inst : DecidableEq G] :
     have := instDecidableRelTypeConsistent τ₁ τ₂
     infer_instance
 
+@[symm]
 protected theorem symm : σ ~ τ → τ ~ σ
   | .rfl => .rfl
   | .function hσ hτ => .function hσ.symm hτ.symm
