@@ -8,6 +8,54 @@ deriving Repr
 
 export EvalError (TypeError CastError ConstantError NotImplemented)
 
+def Vector.concat (C : Vector α n) (x : α) : Vector α (n + 1) :=
+  .mk (C.toArray.push x) (by simp)
+
+@[simp] theorem Vector.concat_getElem_lt {C : Vector α n} {ilt : i < n} :
+    (C.concat x)[i] = C[i] := by
+  rw [concat, getElem_mk, Array.getElem_push_lt] <;> simp [*]
+
+@[simp] theorem Vector.concat_getLast {C : Vector α n} :
+    (C.concat x)[n] = x := by
+  rw [concat, getElem_mk]
+  conv in n => rw [C.size_toArray.symm]
+  exact Array.getElem_push_eq
+
+def Compatible {m n : Nat} (C : Vector α m) (C' : Vector α n) : Prop :=
+  ∃ s : Array α, ∃ h : m + s.size = n, C' = .mk (C.toArray ++ s) (by simpa)
+
+namespace Compatible
+
+protected theorem rfl : Compatible C C := ⟨#[], rfl, rfl⟩
+
+protected theorem le
+    {C : Vector α m} {C' : Vector α n} : Compatible C C' → m ≤ n
+  | ⟨_, h, _⟩ => Nat.le.intro h
+
+protected theorem trans
+  {C₁ : Vector α m₁} {C₂ : Vector α m₂} {C₃ : Vector α m₃} :
+    Compatible C₁ C₂ → Compatible C₂ C₃ → Compatible C₁ C₃ := by
+  rintro ⟨s, rfl, rfl⟩ ⟨t, rfl, rfl⟩
+  exists s ++ t, by simp [Nat.add_assoc]
+  simp
+
+theorem getElem_eq {C : Vector α m} {C' : Vector α n}
+  (h : Compatible C C') (l : Fin m) :
+    C[l] = C'[l]'(l.val_lt_of_le h.le) := by
+  rcases h with ⟨h, rfl, rfl⟩
+  simp
+
+theorem getElem_eq' {C : Vector α m} {C' : Vector α n}
+  (h : Compatible C C') (hl : l < m) :
+    C[l] = C'[l]'(Nat.lt_of_lt_of_le hl h.le) := by
+  rcases h with ⟨h, rfl, rfl⟩
+  simp [hl]
+
+theorem ofConcat {C : Vector α n} : Compatible C (C.concat x) := by
+  exists #[x], by simp
+
+end Compatible
+
 inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) where
   | const (c : S.ℂ) (h : S.Δ c ~ τ)
   | lambda (x : S.𝕏) (σ σ' : S.𝕋)
@@ -23,6 +71,12 @@ instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Value S C τ) where
     .indentD (reprPrec e 10)
   | .location l _ => s!"*{l}"
   ) ++ " : " ++ reprPrec τ 10 ++ ")"
+
+def Value.lift (v : Value S C τ) (hc : Compatible C C') : Value S C' τ :=
+  match v with
+  | .const c h => .const c h
+  | .lambda x σ σ' e h => .lambda x σ σ' e h
+  | .location l h => .location ⟨l, l.val_lt_of_le hc.le⟩ (hc.getElem_eq l ▸ h)
 
 def Result (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) :=
   Except EvalError (Value S C τ)
@@ -48,14 +102,6 @@ where run (μ : Memory S C) (i : Nat) : Std.Format :=
     toString i ++ ": " ++ reprPrec (μ ⟨i, h⟩) 10 ++ "," ++ .line ++ run μ (i + 1)
   else .nil
 
--- def newRef (C : Vector S.𝕋 m) (μ : Memory S C) (v : Value S C τ) :
---     Σ C : Vector S.𝕋 (m + 1), Memory S C :=
---   ⟨.mk (C.toList.concat τ).toArray (by simp), fun l ↦
---     if h : l < m then sorry else by
---       have : l = ⟨m, m.lt_add_one⟩ := by ext; simp only; omega
---       simp [this]
---       sorry⟩
-
 set_option linter.checkUnivs false
 structure ComputationSystem extends TypeSystem where
   δ : ℂ → ℂ → ℂ
@@ -67,33 +113,38 @@ structure ComputationSystem extends TypeSystem where
 instance : Coe ComputationSystem TypeSystem where
   coe := ComputationSystem.toTypeSystem
 
-instance (S : ComputationSystem) (τ : S.𝕋) : Inhabited <|
-    Σ m, Σ C : Vector S.𝕋 m, Memory S.toTypeSystem C ×
-      Result S.toTypeSystem C τ where
-  default := ⟨0, .mk #[] rfl, nofun, .error NotImplemented⟩
-
 set_option linter.unusedVariables false in
 def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
   (μ : Memory S.toTypeSystem C) :
     {τ : S.𝕋} → TypedExpression S (fun _ ↦ none) τ →
-      Σ m, Σ C : Vector S.𝕋 m, Memory S C × Result S C τ
-  | _, .const c => ⟨m, C, μ, .ok <| .const c .rfl⟩
-  | τ ⟶ τ', .lambda x e => ⟨m, C, μ, .ok <| .lambda x τ τ' e .rfl⟩
+      Σ m', Σ C' : {C' : Vector S.𝕋 m' // Compatible C C'},
+        Memory S C'.val × Result S C'.val τ
+  | _, .const c => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .const c .rfl⟩
+  | τ ⟶ τ', .lambda x e => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .lambda x τ τ' e .rfl⟩
   | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ e₁ with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-    | ⟨m, C, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ e₂ with
-      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-      | ⟨m, C, μ, .ok <| .const c₂ _⟩ => ⟨m, C, μ, match h : S.Δ c₁ with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ e₂ with
+      | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
+      | ⟨m, ⟨C, hC'⟩, μ, .ok <| .const c₂ _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ,
+        match h : S.Δ c₁ with
         | .ground _ | ref _ => nomatch h ▸ h₁
         | ?? => Value.cast (.const (S.δ c₁ c₂) .con_unknown)
         | σ ⟶ σ' => if h₂ : S.Δ c₂ ~ σ
           then Value.cast (.const (S.δ c₁ c₂) <| S.δ_lawful c₁ c₂ σ σ' h h₂)
           else .error CastError⟩
-      | ⟨m, C, μ, .ok <| _⟩ => ⟨m, C, μ, .error ConstantError⟩
-    | ⟨m, C, μ, .ok <| .lambda x σ σ' e h⟩ => match eval S C μ e₂ with
-      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-      | ⟨m, C, μ, .ok v₂⟩ => panic! "lambda 替换未实现"
-  | _, .getref e => panic! "新地址分配未实现"
+      | ⟨m, ⟨C, hC'⟩, μ, .ok <| _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ConstantError⟩
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .lambda x σ σ' e h⟩ => match eval S C μ e₂ with
+      | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
+      | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error NotImplemented⟩
+  | _, .getref (τ := τ) e => match eval S C μ e with
+    | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
+    | ⟨m, ⟨C, hC⟩, μ, .ok v⟩ => ⟨m + 1, ⟨C.concat τ, hC.trans .ofConcat⟩,
+      fun l ↦ if hl : l < m then by
+        simpa [hl] using (μ ⟨l, hl⟩).lift Compatible.ofConcat
+      else by
+        simpa [show l = ⟨m, m.lt_add_one⟩ by ext; simp only; omega]
+          using v.lift Compatible.ofConcat,
+      .ok <| .location ⟨m, m.lt_add_one⟩ <| by simpa using .rfl⟩
   | τ, .deref e => match eval S C μ e with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
@@ -101,9 +152,14 @@ def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
   | _, .assign e₁ e₂ => match eval S C μ e₁ with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
-    | ⟨m, C, μ, .ok <| .location l h⟩ => match eval S C μ e₂ with
-      | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-      | ⟨m, C, μ, .ok v₂⟩ => panic! "储存写入未实现"
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .location l h⟩ => match eval S C μ e₂ with
+      | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
+      | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => ⟨m, ⟨C, hC.trans hC'⟩,
+        fun i ↦ if ieq : i = ⟨l, l.val_lt_of_le hC'.le⟩ then by
+          simp [TypeConsistent.ref_iff, hC'.getElem_eq] at h
+          simpa [ieq, h] using v₂
+        else μ i,
+        .ok <| .location ⟨l, l.val_lt_of_le hC'.le⟩ <| by simpa [← hC'.getElem_eq']⟩
   | _, .cast (σ := σ) τ e _ _ => match eval S C μ e with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok v⟩ => ⟨m, C, μ, v.cast⟩
