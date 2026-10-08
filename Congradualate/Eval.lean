@@ -56,27 +56,46 @@ theorem ofConcat {C : Vector α n} : Compatible C (C.concat x) := by
 
 end Compatible
 
-inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) where
-  | const (c : S.ℂ) (h : S.Δ c ~ τ)
-  | lambda (x : S.𝕏) (σ σ' : S.𝕋)
-    (e : TypedExpression S (if · = x then some σ else none) σ')
-    (h : σ ⟶ σ' ~ τ)
-  | location (l : Fin m) (h : ref (C[l]) ~ τ)
+mutual
+
+inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) : S.𝕋 → Type where
+  | const (c : S.ℂ) (h : S.Δ c ~ τ) : Value S C τ
+  | lambda {Γ : S.𝕏 → Option S.𝕋} (V : ContextValue S C Γ)
+    (x : S.𝕏) (σ σ' : S.𝕋)
+    (e : TypedExpression S (fun y ↦ if y = x then some σ else Γ y) σ')
+    (h : σ ⟶ σ' ~ τ) : Value S C τ
+  | location (l : Fin m) (h : ref (C[l]) ~ τ) : Value S C τ
+
+inductive ContextValue (S : TypeSystem) (C : Vector S.𝕋 m) : (S.𝕏 → Option S.𝕋) → Type where
+  | mk (V : ∀ x τ, Γ x = some τ → Value S C τ) : ContextValue S C Γ
+
+end
 
 instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Value S C τ) where
   reprPrec v _ := "(" ++ (match v with
   | .const c _ => reprPrec c 10
-  | .lambda x σ _ e _ =>
+  | .lambda _ x σ _ e _ =>
     "lambda " ++ reprPrec x 10 ++ " : " ++ reprPrec σ 10 ++ " =>" ++
     .indentD (reprPrec e 10)
   | .location l _ => s!"*{l}"
   ) ++ " : " ++ reprPrec τ 10 ++ ")"
 
+instance : CoeFun (ContextValue S C Γ) (fun _ ↦ ∀ x τ, Γ x = some τ → Value S C τ) where
+  coe V := V.casesOn id
+
+mutual
+
 def Value.lift (v : Value S C τ) (hc : Compatible C C') : Value S C' τ :=
   match v with
   | .const c h => .const c h
-  | .lambda x σ σ' e h => .lambda x σ σ' e h
+  | .lambda V x σ σ' e h => .lambda (V.lift hc) x σ σ' e h
   | .location l h => .location ⟨l, l.val_lt_of_le hc.le⟩ (hc.getElem_eq l ▸ h)
+
+def ContextValue.lift (V : ContextValue S C Γ) (hc : Compatible C C') :
+    ContextValue S C' Γ :=
+  V.casesOn fun V ↦ .mk (V · · · |>.lift hc)
+
+end
 
 def Result (S : TypeSystem) (C : Vector S.𝕋 m) (τ : S.𝕋) :=
   Except EvalError (Value S C τ)
@@ -87,28 +106,13 @@ instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Result S C τ) :=
 def Value.cast : Value S C σ → Result S C τ
   | .const c _ =>
     if h : S.Δ c ~ τ then .ok (.const c h) else .error CastError
-  | .lambda x σ σ' e _ =>
-    if h : σ ⟶ σ' ~ τ then .ok (.lambda x σ σ' e h) else .error CastError
+  | .lambda V x σ σ' e _ =>
+    if h : σ ⟶ σ' ~ τ then .ok (.lambda V x σ σ' e h) else .error CastError
   | .location l _ =>
     if h : ref (C[l]) ~ τ then .ok (.location l h) else .error CastError
 
 def Memory (S : TypeSystem) (C : Vector S.𝕋 m) :=
   ∀ l : Fin m, Value S C C[l]
-
-def Context (S : TypeSystem) (C : Vector S.𝕋 m) := S.𝕏 → Option (Σ τ, Value S C τ)
-
-namespace Context
-
-protected def empty : Context S C := fun _ ↦ none
-protected abbrev Γ (V : Context S C) (x : S.𝕏) : Option S.𝕋 := Sigma.fst <$> V x
-
-protected def lift (V : Context S C) (h : Compatible C C') : Context S C' :=
-  fun x ↦ V x <&> fun ⟨τ, v⟩ ↦ ⟨τ, v.lift h⟩
-
-protected theorem Γ_lift (V : Context S C) : (V.lift h).Γ = V.Γ := by
-  funext; simp [Context.Γ, Context.lift]
-
-end Context
 
 instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] (C : Vector S.𝕋 m) :
   Repr (Memory S C) where reprPrec μ _ := "![" ++ run μ 0 ++ "]"
@@ -129,20 +133,18 @@ instance : Coe ComputationSystem TypeSystem where
   coe := ComputationSystem.toTypeSystem
 
 set_option linter.unusedVariables false in
-def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
-  (μ : Memory S.toTypeSystem C) (V : Context S C)
-  {τ : S.𝕋} (e : TypedExpression S V.Γ τ) :
+def eval (S : ComputationSystem) {Γ : S.𝕏 → Option S.𝕋} (C : Vector S.𝕋 m)
+  (μ : Memory S.toTypeSystem C) (V : ContextValue S C Γ)
+  {τ : S.𝕋} (e : TypedExpression S Γ τ) :
     Σ m', Σ C' : {C' : Vector S.𝕋 m' // Compatible C C'},
       Memory S C'.val × Result S C'.val τ :=
   match τ, e with
   | _, .const c => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .const c .rfl⟩
-  | _, .var (x := x) h => ⟨m, ⟨C, .rfl⟩, μ, match hV : V x with
-    | none => by exfalso; simp [Context.Γ, hV] at h
-    | some ⟨τ', v⟩ => v.cast⟩
-  | τ ⟶ τ', .lambda x e => ⟨m, ⟨C, .rfl⟩, μ, .error NotImplemented⟩
+  | _, .var (τ := τ) (x := x) h => ⟨m, ⟨C, .rfl⟩, μ, .ok (V x τ h)⟩
+  | τ ⟶ τ', .lambda x e => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .lambda V x τ τ' e .rfl⟩
   | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ V e₁ with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-    | ⟨m, ⟨C, hC⟩, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ (V.lift hC) (V.Γ_lift ▸ e₂) with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ (V.lift hC) e₂ with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok <| .const c₂ _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ,
         match h : S.Δ c₁ with
@@ -152,9 +154,20 @@ def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
           then Value.cast (.const (S.δ c₁ c₂) <| S.δ_lawful c₁ c₂ σ σ' h h₂)
           else .error CastError⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok <| _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ConstantError⟩
-    | ⟨m, ⟨C, hC⟩, μ, .ok <| .lambda x σ σ' e h⟩ => match eval S C μ (V.lift hC) (V.Γ_lift ▸ e₂) with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .lambda (Γ := Γ) V' x σ σ' e h⟩ =>
+      match eval S C μ (V.lift hC) e₂ with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
-      | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error NotImplemented⟩
+      | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => match v₂.cast (τ := σ) with
+        | .error ε => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
+        | .ok v => match eval S C μ ⟨
+            fun y ν h ↦ if hy : y = x then
+              have : σ = ν := by simpa [hy] using h
+              this ▸ v
+            else
+              V' y ν (by simpa [hy] using h) |>.lift hC'
+          ⟩ e with
+          | ⟨m, ⟨C, hC''⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, .error ε⟩
+          | ⟨m, ⟨C, hC''⟩, μ, .ok v⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, v.cast⟩
   | _, .getref (τ := τ) e => match eval S C μ V e with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, ⟨C, hC⟩, μ, .ok v⟩ => ⟨m + 1, ⟨C.concat τ, hC.trans .ofConcat⟩,
@@ -171,7 +184,7 @@ def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
   | _, .assign e₁ e₂ => match eval S C μ V e₁ with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
-    | ⟨m, ⟨C, hC⟩, μ, .ok <| .location l h⟩ => match eval S C μ (V.lift hC) (V.Γ_lift ▸ e₂) with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .location l h⟩ => match eval S C μ (V.lift hC) e₂ with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => ⟨m, ⟨C, hC.trans hC'⟩,
         fun i ↦ if ieq : i = ⟨l, l.val_lt_of_le hC'.le⟩ then by
@@ -185,10 +198,4 @@ def eval (S : ComputationSystem) (C : Vector S.𝕋 m)
 termination_by sizeOf e
 decreasing_by
   all_goals simp_all; try omega
-  all_goals
-  · suffices sizeOf ((@V.Γ_lift (h := hC)) ▸ e₂) = sizeOf e₂ by
-      rw [this]; omega
-    congr 1
-    · rw [V.Γ_lift]
-    · rw [V.Γ_lift]
-    · rw [eqRec_heq_iff]
+  sorry
