@@ -56,10 +56,10 @@ theorem not_function_ground : ¬(σ ⟶ τ ~ .ground γ) := nofun
 
 end TypeConsistent
 
-inductive TypedExpression (S : TypeSystem) : (S.𝕏 → Option S.𝕋) → S.𝕋 → Type where
+inductive TypedExpression (S : TypeSystem) : List (S.𝕏 × S.𝕋) → S.𝕋 → Type where
   | const c : TypedExpression S Γ (S.Δ c)
-  | var : Γ x = some τ → TypedExpression S Γ τ
-  | lambda x (e : TypedExpression S (fun y ↦ if y = x then some τ else Γ y) σ) :
+  | var : Γ.lookup x = some τ → TypedExpression S Γ τ
+  | lambda x (e : TypedExpression S ((x, τ) :: Γ) σ) :
     TypedExpression S Γ (τ ⟶ σ)
   | apply (e₁ : TypedExpression S Γ (τ ⟶ τ')) (e₂ : TypedExpression S Γ τ) :
     TypedExpression S Γ τ'
@@ -71,7 +71,7 @@ inductive TypedExpression (S : TypeSystem) : (S.𝕏 → Option S.𝕋) → S.�
     TypedExpression S Γ τ
 
 protected def TypedExpression.repr (S : TypeSystem) [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ]
-    (Γ : S.𝕏 → Option S.𝕋) (τ : S.𝕋) (e : TypedExpression S Γ τ) : Std.Format :=
+    (Γ : List (S.𝕏 × S.𝕋)) (τ : S.𝕋) (e : TypedExpression S Γ τ) : Std.Format :=
   (match e with
   | .const v | .var (x := v) _ => reprPrec v 10
   | .lambda (τ := τ) x e =>
@@ -84,17 +84,17 @@ protected def TypedExpression.repr (S : TypeSystem) [Repr S.𝕏] [Repr S.𝔾] 
   ) ++ " : " ++ reprPrec τ 10
 
 instance (S : TypeSystem) [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ]
-    (Γ : S.𝕏 → Option S.𝕋) (τ : S.𝕋) : Repr (TypedExpression S Γ τ) where
+    (Γ : List (S.𝕏 × S.𝕋)) (τ : S.𝕋) : Repr (TypedExpression S Γ τ) where
   reprPrec e _ := e.repr
 
-def annotate (S : TypeSystem) (Γ : S.𝕏 → Option S.𝕋) :
+def annotate (S : TypeSystem) (Γ : List (S.𝕏 × S.𝕋)) :
     S.𝔼 → Option (Σ τ, TypedExpression S Γ τ)
   | .constant c => some ⟨S.Δ c, .const c⟩
-  | .var x => match h : Γ x with
+  | .var x => match h : Γ.lookup x with
     | none => none
     | some τ => some ⟨τ, .var h⟩
   | lambda x : σ => e => (fun ⟨τ, e⟩ ↦ ⟨σ ⟶ τ, .lambda x e⟩) <$>
-    annotate S (fun y ↦ if y = x then some σ else Γ y) e
+    annotate S ((x, σ) :: Γ) e
   | .apply e₁ e₂ =>
     annotate S Γ e₂ >>= fun ⟨τ₂, e₂'⟩ ↦
     annotate S Γ e₁ >>= fun

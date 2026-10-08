@@ -60,14 +60,16 @@ mutual
 
 inductive Value (S : TypeSystem) (C : Vector S.𝕋 m) : S.𝕋 → Type where
   | const (c : S.ℂ) (h : S.Δ c ~ τ) : Value S C τ
-  | lambda {Γ : S.𝕏 → Option S.𝕋} (V : ContextValue S C Γ)
+  | lambda (V : ContextValue S C Γ)
     (x : S.𝕏) (σ σ' : S.𝕋)
-    (e : TypedExpression S (fun y ↦ if y = x then some σ else Γ y) σ')
+    (e : TypedExpression S ((x, σ) :: Γ) σ')
     (h : σ ⟶ σ' ~ τ) : Value S C τ
   | location (l : Fin m) (h : ref (C[l]) ~ τ) : Value S C τ
 
-inductive ContextValue (S : TypeSystem) (C : Vector S.𝕋 m) : (S.𝕏 → Option S.𝕋) → Type where
-  | mk (V : ∀ x τ, Γ x = some τ → Value S C τ) : ContextValue S C Γ
+inductive ContextValue (S : TypeSystem) (C : Vector S.𝕋 m) : List (S.𝕏 × S.𝕋) → Type where
+  | nil : ContextValue S C []
+  | cons (v : Value S C τ) (V : ContextValue S C xs) :
+    ContextValue S C ((x, τ) :: xs)
 
 end
 
@@ -80,10 +82,20 @@ instance [Repr S.𝕏] [Repr S.𝔾] [Repr S.ℂ] : Repr (Value S C τ) where
   | .location l _ => s!"*{l}"
   ) ++ " : " ++ reprPrec τ 10 ++ ")"
 
-instance : CoeFun (ContextValue S C Γ) (fun _ ↦ ∀ x τ, Γ x = some τ → Value S C τ) where
-  coe V := V.casesOn id
-
 mutual
+
+def ContextValue.get (V : ContextValue S C Γ) (x : S.𝕏)
+    (h : Γ.lookup x = some τ) : Value S C τ := match V with
+  | .cons (x := x') (τ := τ') (xs := xs) v V =>
+    if hx : x = x' then
+      have : τ' = τ := by simpa [hx] using h
+      this ▸ v
+    else V.get x <| by
+      rw [List.lookup_cons] at h
+      split at h
+      · rw [beq_iff_eq] at ‹x == x'›
+        contradiction
+      · exact h
 
 def Value.lift (v : Value S C τ) (hc : Compatible C C') : Value S C' τ :=
   match v with
@@ -92,8 +104,9 @@ def Value.lift (v : Value S C τ) (hc : Compatible C C') : Value S C' τ :=
   | .location l h => .location ⟨l, l.val_lt_of_le hc.le⟩ (hc.getElem_eq l ▸ h)
 
 def ContextValue.lift (V : ContextValue S C Γ) (hc : Compatible C C') :
-    ContextValue S C' Γ :=
-  V.casesOn fun V ↦ .mk (V · · · |>.lift hc)
+    ContextValue S C' Γ := match V with
+  | .nil => .nil
+  | .cons v V => .cons (v.lift hc) (V.lift hc)
 
 end
 
@@ -133,14 +146,14 @@ instance : Coe ComputationSystem TypeSystem where
   coe := ComputationSystem.toTypeSystem
 
 set_option linter.unusedVariables false in
-def eval (S : ComputationSystem) {Γ : S.𝕏 → Option S.𝕋} (C : Vector S.𝕋 m)
+def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.𝕋 m)
   (μ : Memory S.toTypeSystem C) (V : ContextValue S C Γ)
   {τ : S.𝕋} (e : TypedExpression S Γ τ) :
     Σ m', Σ C' : {C' : Vector S.𝕋 m' // Compatible C C'},
       Memory S C'.val × Result S C'.val τ :=
   match τ, e with
   | _, .const c => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .const c .rfl⟩
-  | _, .var (τ := τ) (x := x) h => ⟨m, ⟨C, .rfl⟩, μ, .ok (V x τ h)⟩
+  | _, .var (τ := τ) (x := x) h => ⟨m, ⟨C, .rfl⟩, μ, .ok <| V.get x h⟩
   | τ ⟶ τ', .lambda x e => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .lambda V x τ τ' e .rfl⟩
   | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ V e₁ with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
@@ -159,13 +172,8 @@ def eval (S : ComputationSystem) {Γ : S.𝕏 → Option S.𝕋} (C : Vector S.�
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => match v₂.cast (τ := σ) with
         | .error ε => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
-        | .ok v => match eval S C μ ⟨
-            fun y ν h ↦ if hy : y = x then
-              have : σ = ν := by simpa [hy] using h
-              this ▸ v
-            else
-              V' y ν (by simpa [hy] using h) |>.lift hC'
-          ⟩ e with
+        | .ok v =>
+          match eval S (Γ := (x, σ) :: Γ) C μ (V'.lift hC' |>.cons v) e with
           | ⟨m, ⟨C, hC''⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, .error ε⟩
           | ⟨m, ⟨C, hC''⟩, μ, .ok v⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, v.cast⟩
   | _, .getref (τ := τ) e => match eval S C μ V e with
