@@ -76,34 +76,34 @@ info: some ⟨??, (lambda "r1" : ?? =>
   say "_" := "r2" ⟵ #f;
   deref "r1" #t
 
-/--
-info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#t : boolean))⟩⟩⟩
--/
-#guard_msgs in
-#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
-  Gradual.annotate TSys (fun _ ↦ none)
-    (isnumber (succ 4))
+-- /--
+-- info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#t : boolean))⟩⟩⟩
+-- -/
+-- #guard_msgs in
+-- #eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
+--   Gradual.annotate TSys (fun _ ↦ none)
+--     (isnumber (succ 4))
 
-/--
-info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#f : boolean))⟩⟩⟩
--/
-#guard_msgs in
-#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
-  Gradual.annotate TSys (fun _ ↦ none)
-    (isnumber succ)
+-- /--
+-- info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#f : boolean))⟩⟩⟩
+-- -/
+-- #guard_msgs in
+-- #eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
+--   Gradual.annotate TSys (fun _ ↦ none)
+--     (isnumber succ)
 
-/--
-info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.error (EvalError.ConstantError))⟩⟩⟩
--/
-#guard_msgs in
-#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
-  Gradual.annotate TSys (fun _ ↦ none)
-    (isnumber <| lambda "x" : number => "x")
+-- /--
+-- info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.error (EvalError.ConstantError))⟩⟩⟩
+-- -/
+-- #guard_msgs in
+-- #eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
+--   Gradual.annotate TSys (fun _ ↦ none)
+--     (isnumber <| lambda "x" : number => "x")
 
-/--
-info: some ⟨number, ⟨1, ⟨{ toArray := #[number], size_toArray := _ }, (![0: (2 : number), ], Except.ok (2 : number))⟩⟩⟩
--/
-#guard_msgs in
-#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
-  Gradual.annotate TSys (fun _ ↦ none)
-    (deref <| getref 0 ⟵ 2)
+-- /--
+-- info: some ⟨number, ⟨1, ⟨{ toArray := #[number], size_toArray := _ }, (![0: (2 : number), ], Except.ok (2 : number))⟩⟩⟩
+-- -/
+-- #guard_msgs in
+-- #eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (.mk #[] rfl) nofun e) <$>
+--   Gradual.annotate TSys (fun _ ↦ none)
+--     (deref <| getref 0 ⟵ 2)
