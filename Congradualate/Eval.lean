@@ -3,10 +3,10 @@ import Congradualate.Gradual
 open Gradual
 
 inductive EvalError where
-  | TypeError | CastError | ConstantError | NotImplemented
+  | TypeError | CastError | ConstantError | KillError
 deriving Repr
 
-export EvalError (TypeError CastError ConstantError NotImplemented)
+export EvalError (TypeError CastError ConstantError KillError)
 
 def Vector.concat (C : Vector α n) (x : α) : Vector α (n + 1) :=
   .mk (C.toArray.push x) (by simp)
@@ -145,19 +145,19 @@ structure ComputationSystem extends TypeSystem where
 instance : Coe ComputationSystem TypeSystem where
   coe := ComputationSystem.toTypeSystem
 
-set_option linter.unusedVariables false in
 def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.𝕋 m)
   (μ : Memory S.toTypeSystem C) (V : ContextValue S C Γ)
-  {τ : S.𝕋} (e : TypedExpression S Γ τ) :
+  {τ : S.𝕋} (e : TypedExpression S Γ τ) (fuel : Nat := 1000000) :
     Σ m', Σ C' : {C' : Vector S.𝕋 m' // Compatible C C'},
-      Memory S C'.val × Result S C'.val τ :=
+      Memory S C'.val × Result S C'.val τ := match fuel with
+  | 0 => ⟨m, ⟨C, .rfl⟩, μ, .error KillError⟩ | fuel + 1 =>
   match τ, e with
   | _, .const c => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .const c .rfl⟩
   | _, .var (τ := τ) (x := x) h => ⟨m, ⟨C, .rfl⟩, μ, .ok <| V.get x h⟩
   | τ ⟶ τ', .lambda x e => ⟨m, ⟨C, .rfl⟩, μ, .ok <| .lambda V x τ τ' e .rfl⟩
-  | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ V e₁ with
+  | τ', .apply (τ := τ) e₁ e₂ => match eval S C μ V e₁ fuel with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
-    | ⟨m, ⟨C, hC⟩, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ (V.lift hC) e₂ with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .const c₁ h₁⟩ => match eval S C μ (V.lift hC) e₂ fuel with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok <| .const c₂ _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ,
         match h : S.Δ c₁ with
@@ -168,15 +168,15 @@ def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.�
           else .error CastError⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok <| _⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ConstantError⟩
     | ⟨m, ⟨C, hC⟩, μ, .ok <| .lambda (Γ := Γ) V' x σ σ' e h⟩ =>
-      match eval S C μ (V.lift hC) e₂ with
+      match eval S C μ (V.lift hC) e₂ fuel with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => match v₂.cast (τ := σ) with
         | .error ε => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
         | .ok v =>
-          match eval S (Γ := (x, σ) :: Γ) C μ (V'.lift hC' |>.cons v) e with
+          match eval S (Γ := (x, σ) :: Γ) C μ (V'.lift hC' |>.cons v) e fuel with
           | ⟨m, ⟨C, hC''⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, .error ε⟩
           | ⟨m, ⟨C, hC''⟩, μ, .ok v⟩ => ⟨m, ⟨C, hC.trans hC' |>.trans hC''⟩, μ, v.cast⟩
-  | _, .getref (τ := τ) e => match eval S C μ V e with
+  | _, .getref (τ := τ) e => match eval S C μ V e fuel with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, ⟨C, hC⟩, μ, .ok v⟩ => ⟨m + 1, ⟨C.concat τ, hC.trans .ofConcat⟩,
       fun l ↦ if hl : l < m then by
@@ -185,14 +185,14 @@ def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.�
         simpa [show l = ⟨m, m.lt_add_one⟩ by ext; simp only; omega]
           using v.lift Compatible.ofConcat,
       .ok <| .location ⟨m, m.lt_add_one⟩ <| by simpa using .rfl⟩
-  | τ, .deref e => match eval S C μ V e with
+  | τ, .deref e => match eval S C μ V e fuel with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
     | ⟨m, C, μ, .ok <| .location l _⟩ => ⟨m, C, μ, (μ l).cast⟩
-  | _, .assign e₁ e₂ => match eval S C μ V e₁ with
+  | _, .assign e₁ e₂ => match eval S C μ V e₁ fuel with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok <| .const _ _⟩ => ⟨m, C, μ, .error ConstantError⟩
-    | ⟨m, ⟨C, hC⟩, μ, .ok <| .location l h⟩ => match eval S C μ (V.lift hC) e₂ with
+    | ⟨m, ⟨C, hC⟩, μ, .ok <| .location l h⟩ => match eval S C μ (V.lift hC) e₂ fuel with
       | ⟨m, ⟨C, hC'⟩, μ, .error ε⟩ => ⟨m, ⟨C, hC.trans hC'⟩, μ, .error ε⟩
       | ⟨m, ⟨C, hC'⟩, μ, .ok v₂⟩ => ⟨m, ⟨C, hC.trans hC'⟩,
         fun i ↦ if ieq : i = ⟨l, l.val_lt_of_le hC'.le⟩ then by
@@ -200,10 +200,6 @@ def eval (S : ComputationSystem) {Γ : List (S.𝕏 × S.𝕋)} (C : Vector S.�
           simpa [ieq, h] using v₂
         else μ i,
         .ok <| .location ⟨l, l.val_lt_of_le hC'.le⟩ <| by simpa [← hC'.getElem_eq']⟩
-  | _, .cast (σ := σ) τ e _ _ => match eval S C μ V e with
+  | _, .cast τ e _ _ => match eval S C μ V e fuel with
     | ⟨m, C, μ, .error ε⟩ => ⟨m, C, μ, .error ε⟩
     | ⟨m, C, μ, .ok v⟩ => ⟨m, C, μ, v.cast⟩
-termination_by sizeOf e + sizeOf V
-decreasing_by
-  all_goals simp_all; try omega
-  all_goals sorry

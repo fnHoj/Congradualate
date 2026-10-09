@@ -57,7 +57,7 @@ abbrev succ : TSys.𝔼 := Constant.succ
 abbrev isnumber : TSys.𝔼 := Constant.isnumber
 abbrev mystery : TSys.𝔼 := Constant.mystery
 
-macro "#evaluate" t:term : command => `(#eval! (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (Γ := []) (.mk #[] rfl) nofun .nil e) <$> Gradual.annotate TSys [] $t)
+macro "#evaluate" t:term : command => `(#eval (fun ⟨τ, e⟩ ↦ Sigma.mk τ <| eval TSys (Γ := []) (.mk #[] rfl) nofun .nil e) <$> Gradual.annotate TSys [] $t)
 
 /--
 info: some ⟨boolean, ⟨0, ⟨{ toArray := #[], size_toArray := _ }, (![], Except.ok (#t : boolean))⟩⟩⟩
